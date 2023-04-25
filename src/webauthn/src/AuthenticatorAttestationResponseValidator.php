@@ -172,28 +172,64 @@ class AuthenticatorAttestationResponseValidator implements CanLogData, CanDispat
                     ->getAuthData()
                     ->getExtensions()
             );
-            $parsedRelyingPartyId = parse_url($C->getOrigin());
-            is_array($parsedRelyingPartyId) || throw AuthenticatorResponseVerificationException::create(
-                sprintf('The origin URI "%s" is not valid', $C->getOrigin())
-            );
-            array_key_exists(
-                'scheme',
-                $parsedRelyingPartyId
-            ) || throw AuthenticatorResponseVerificationException::create('Invalid origin rpId.');
-            $clientDataRpId = $parsedRelyingPartyId['host'] ?? '';
-            $clientDataRpId !== '' || throw AuthenticatorResponseVerificationException::create('Invalid origin rpId.');
-            $rpIdLength = mb_strlen($facetId);
-            mb_substr(
-                '.' . $clientDataRpId,
-                -($rpIdLength + 1)
-            ) === '.' . $facetId || throw AuthenticatorResponseVerificationException::create('rpId mismatch.');
-            if (! in_array($facetId, $securedRelyingPartyId, true)) {
-                $scheme = $parsedRelyingPartyId['scheme'];
-                $scheme === 'https' || throw AuthenticatorResponseVerificationException::create(
-                    'Invalid scheme. HTTPS required.'
+
+            $origin = $C->getOrigin();
+
+            // Android app origin
+            if (str_starts_with($origin, 'android:apk-key-hash:')) {
+                $apkKeyHash = base64_decode(substr($origin, 21));
+
+                // Get https://<relying-party>/.well-known/assetlinks.json
+                $assetlinksUrl = 'https://' . $rpId . '/.well-known/assetlinks.json';
+                $assetlinks = CollectedAssetLinks::createFromJson(@file_get_contents($assetlinksUrl) ?: '');
+
+                // Check that it contains this apk key hash
+                $foundMatchingKey = false;
+                foreach ($assetlinks->getAssetLinks() as $assetLink) {
+                    if ($assetLink->getTargetNamespace() === 'android_app' && $assetLink->getTargetPackageName() === $C->getAndroidPackageName()) {
+                        foreach ($assetLink->getTargetSha256CertFingerPrints() ?? [] as $fingerprint) {
+                            $hex = explode(':', $fingerprint);
+                            $bytes = array_map(fn ($e) => hexdec($e), $hex);
+                            $bin = pack('C' . count($bytes), ...$bytes);
+
+                            $foundMatchingKey = $bin == $apkKeyHash;
+
+                            if ($foundMatchingKey) {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                $foundMatchingKey || throw AuthenticatorResponseVerificationException::create(
+                    'No matching apk signing certificate signature found'
                 );
+            } else {
+                // Web origin
+                $parsedRelyingPartyId = parse_url($C->getOrigin());
+                is_array($parsedRelyingPartyId) || throw AuthenticatorResponseVerificationException::create(
+                    sprintf('The origin URI "%s" is not valid', $C->getOrigin())
+                );
+                array_key_exists(
+                    'scheme',
+                    $parsedRelyingPartyId
+                ) || throw AuthenticatorResponseVerificationException::create('Invalid origin rpId.');
+                $clientDataRpId = $parsedRelyingPartyId['host'] ?? '';
+                $clientDataRpId !== '' || throw AuthenticatorResponseVerificationException::create('Invalid origin rpId.');
+                $rpIdLength = mb_strlen($facetId);
+                mb_substr(
+                    '.' . $clientDataRpId,
+                    - ($rpIdLength + 1)
+                ) === '.' . $facetId || throw AuthenticatorResponseVerificationException::create('rpId mismatch.');
+                if (!in_array($facetId, $securedRelyingPartyId, true)) {
+                    $scheme = $parsedRelyingPartyId['scheme'];
+                    $scheme === 'https' || throw AuthenticatorResponseVerificationException::create(
+                        'Invalid scheme. HTTPS required.'
+                    );
+                }
             }
-            if (! is_string($request) && $C->getTokenBinding() !== null) {
+
+            if (!is_string($request) && $C->getTokenBinding() !== null) {
                 $this->tokenBindingHandler?->check($C->getTokenBinding(), $request);
             }
             $clientDataJSONHash = hash(
@@ -349,7 +385,7 @@ class AuthenticatorAttestationResponseValidator implements CanLogData, CanDispat
         ?MetadataStatement $metadataStatement
     ): void {
         $trustPath = $attestationStatement->getTrustPath();
-        if (! $trustPath instanceof CertificateTrustPath) {
+        if (!$trustPath instanceof CertificateTrustPath) {
             return;
         }
         $authenticatorCertificates = $trustPath->getCertificates();
@@ -502,16 +538,16 @@ class AuthenticatorAttestationResponseValidator implements CanLogData, CanDispat
         AuthenticationExtensionsClientInputs $authenticationExtensionsClientInputs,
         ?AuthenticationExtensionsClientOutputs $authenticationExtensionsClientOutputs
     ): string {
-        if ($authenticationExtensionsClientOutputs === null || ! $authenticationExtensionsClientInputs->has(
+        if ($authenticationExtensionsClientOutputs === null || !$authenticationExtensionsClientInputs->has(
             'appid'
-        ) || ! $authenticationExtensionsClientOutputs->has('appid')) {
+        ) || !$authenticationExtensionsClientOutputs->has('appid')) {
             return $rpId;
         }
         $appId = $authenticationExtensionsClientInputs->get('appid')
             ->value();
         $wasUsed = $authenticationExtensionsClientOutputs->get('appid')
             ->value();
-        if (! is_string($appId) || $wasUsed !== true) {
+        if (!is_string($appId) || $wasUsed !== true) {
             return $rpId;
         }
         return $appId;

@@ -27,6 +27,8 @@ class CollectedClientData
 
     private readonly bool $crossOrigin;
 
+    private readonly ?string $androidPackageName;
+
     /**
      * @var mixed[]|null
      * @deprecated Since 4.3.0 and will be removed in 5.0.0
@@ -75,6 +77,12 @@ class CollectedClientData
         );
         $this->tokenBinding = $tokenBinding;
 
+        $androidPackageName = $data['androidPackageName'] ?? null;
+        $androidPackageName === null || is_string($androidPackageName) || throw InvalidDataException::create(
+            $data,
+            'Invalid parameter "androidPackageName". Shall be a string or .'
+        );
+
         $this->data = $data;
     }
 
@@ -106,6 +114,11 @@ class CollectedClientData
         return $this->crossOrigin;
     }
 
+    public function getAndroidPackageName(): ?string
+    {
+        return $this->androidPackageName;
+    }
+
     /**
      * @deprecated Since 4.3.0 and will be removed in 5.0.0
      */
@@ -134,7 +147,7 @@ class CollectedClientData
 
     public function get(string $key): mixed
     {
-        if (! $this->has($key)) {
+        if (!$this->has($key)) {
             throw InvalidDataException::create($this->data, sprintf('The key "%s" is missing', $key));
         }
 
